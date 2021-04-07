@@ -18,17 +18,18 @@ See [Set up a ClearML account](../README.md#set-up-a-clearml-account) and [Insta
 
 ### Train example
 ```shell
-python train_tlt.py --ngc-model nvidia/tlt_pretrained_detectnet_v2:resnet18 \
+python train_tlt.py --module detectnet_v2 -m nvidia/tlt_pretrained_detectnet_v2:resnet18 \
         --arch detectnet_v2 --dataset-task <YOUR DATASET TASK ID> \
-        --dataset-export-spec example_specs/dataset_export_spec.txt --config-files specs/ \
-        --key <Your key>
+        --dataset-export-spec  example_specs/dataset_export_spec.txt -c specs/ \
+         --key <Your key> --model_name model --experiment_spec_file  specs/detectnet_v2_spec_file_template.txt
 ```
 
 ### Eval example
 ```shell
-python evaluate_tlt.py --arch detectnet_v2 --experiment-spec-file example_specs/detectnet_v2_train_resnet18_kitti.txt \
-                      --train-task <YOUR TRAIN TASK ID> --dataset-export-spec example_specs/dataset_export_spec.txt \
-                      --dataset-task <YOUR DATASET TASK ID> --key <Your key>
+python evaluate_tlt.py --arch detectnet_v2 --dataset-export-spec example_specs/dataset_export_spec.txt \
+                       --dataset-task <YOUR DATASET TASK ID> \
+                       --experiment_spec_file example_specs/detectnet_v2_eval_kitti.txt \
+                       --key <YOUR KEY> --train-task <YOUR TRAINING TASK ID>
 ```
 
 ### Prune example

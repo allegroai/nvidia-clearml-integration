@@ -111,7 +111,7 @@ def model_prune(task_args):
 
 
 def main():
-    task = Task.init(project_name="Nvidia TLT examples with ClearML", task_name="TLT prune")
+    task = Task.init(project_name="TLT3", task_name="TLT prune")
 
     parser = ArgumentParser()
     parser.add_argument(
@@ -196,7 +196,7 @@ def main():
 
     task_args = parser.parse_args()
 
-    task.set_base_docker("nvcr.io/nvidia/tlt-streamanalytics:v2.0_py3")
+    task.set_base_docker("nvcr.io/nvidia/tlt-streamanalytics:v3.0-dp-py3")
     model_prune(task_args)
 
 

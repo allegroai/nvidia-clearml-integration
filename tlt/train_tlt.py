@@ -1,3 +1,4 @@
+import argparse
 import os
 import shutil
 import sys
@@ -7,52 +8,14 @@ from subprocess import PIPE, run, STDOUT
 from clearml import Dataset, Task
 from pathlib2 import Path
 
+from iva.common.magnet_train import main as train_tlt
 
-def tlt_train(train_args, module):
-    import third_party.keras.mixed_precision as MP, third_party.keras.tensorflow_backend as TFB
 
-    """CLI function for magnet-train. Calls training app."""
-    MP.patch()
-    TFB.patch()
-    if module == "classification":
-        from iva.makenet.scripts import train as makenet_train
+def parse_known_args_only(self, args=None, namespace=None):
+    return self.parse_known_args(args=None, namespace=None)[0]
 
-        makenet_train.main(train_args)
-    else:
-        if module == "faster_rcnn":
-            from iva.faster_rcnn.scripts import train as frcnn_train
 
-            frcnn_train.main(train_args)
-        else:
-            if module in ("ssd", "dssd"):
-                from iva.ssd.scripts import train as ssd_train
-
-                train_args.extend(["--arch", module])
-                ssd_train.main(train_args)
-            else:
-                if module == "retinanet":
-                    from iva.retinanet.scripts import train as retinanet_train
-
-                    retinanet_train.main(train_args)
-                else:
-                    if module == "yolo":
-                        from iva.yolo.scripts import train as yolo_train
-
-                        yolo_train.main(train_args)
-                    else:
-                        if module == "detectnet_v2":
-                            from iva.detectnet_v2.scripts import (
-                                train as detectnet_v2_train,
-                            )
-
-                            detectnet_v2_train.main(train_args)
-                        else:
-                            if module == "mask_rcnn":
-                                from iva.mask_rcnn.scripts import train as mrcnn_train
-
-                                mrcnn_train.main(train_args)
-                            else:
-                                raise NotImplementedError("Unsupported module.")
+argparse.ArgumentParser.parse_args = parse_known_args_only
 
 
 def get_output(command, return_command=False):
@@ -107,8 +70,9 @@ def get_converted_data(dataset_task, conf_file):
     os.makedirs(image_directory_path)
     # download the artifact and open it
     saved_dataset = dataset_upload_task.get_local_copy()
-    dataset_name = os.listdir(saved_dataset)[0]
-    dataset_path = Path(os.path.join(saved_dataset, dataset_name))
+    # dataset_name = os.listdir(saved_dataset)[0]
+    # dataset_path = Path(os.path.join(saved_dataset, dataset_name))
+    dataset_path = Path(saved_dataset)
     if not dataset_path.is_dir() and dataset_path.suffix in (".zip", ".tgz", ".tar.gz"):
         dataset_suffix = dataset_path.suffix
         if dataset_suffix == ".zip":
@@ -127,7 +91,7 @@ def get_converted_data(dataset_task, conf_file):
                 file.extractall(image_directory_path)
         saved_dataset = str(dataset_path)
     else:
-        get_output("cp -R {}/train {}".format(saved_dataset, image_directory_path))
+        get_output("cp -R {}/* {}".format(saved_dataset, image_directory_path))
     print(saved_dataset)
 
 
@@ -173,90 +137,28 @@ def download_pretrained_model(model_name, ngc_model, conf_file):
                 "{}.hdf5".format(model_name),
             ),
         )
-    return model_dir
 
 
-def train_unpruned(model_name, config_file, arch, key, model_dir):
-    """
-    tlt-train args
-    classification, DetectNet_v2,
-    Required Arguments:
-        -r, --results_dir: Path to a folder where the experiment outputs should be written.
-        -k, --key: User specific encoding key to save or load a .tlt model.
-        -e, --experiment_spec_file: Path to the experiment spec file.
-    Optional Arguments:
-        --gpus
-
-    FasterRCNN
-    Required Arguments:
-        -e, --experiment_spec_file: Path to the experiment spec file.
-    Optional Arguments:
-        -k, --enc_key: User specific encoding key to save or load a .tlt model.
-        --gpus
-
-    SSD, DSSD, YOLOv3, RetinaNet
-    Required Arguments:
-        -r, --results_dir: Path to the folder where the experiment output is written.
-        -k, --key: Provide the encryption key to decrypt the model.
-        -e, --experiment_spec_file: Experiment specification file to set up the evaluation experiment.
-                                    This should be the same as the training specification file.
-
-    Optional Arguments:
-        --gpus num_gpus: Number of GPUs to use and processes to launch for training. The default = 1.
-        -m, --resume_model_weights: Path to a pre-trained model or model to continue training.
-        --initial_epoch: Epoch number to resume from.
-
-    MaskRCNN
-    Required Arguments:
-        -d, --model_dir: Path to the folder where the experiment output is written.
-        -k, --key: Provide the encryption key to decrypt the model.
-        -e, --experiment_spec_file: Experiment specification file to set up the evaluation experiment.
-                                    This should be the same as the training specification file.
-
-    Optional Arguments:
-        --gpus num_gpus: Number of GPUs to use and processes to launch for training. The default = 1.
-
-    * Format: tlt-train classification --gpus <num GPUs> -k <encoding key> -r <result directory> -e <spec file>
-
-    https://docs.nvidia.com/metropolis/TLT/tlt-getting-started-guide/text/training_model.html#quantization-aware-training
-    """
-    if arch in ("classification", "detectnet_v2"):
-        train_command = "-e {} -r /home/{}/experiment_dir_unpruned -k {} -n {}_detector".format(
-            config_file, arch, key or os.environ.get("KEY"), model_name
-        ).split(
-            " "
-        )
-    elif arch in ("ssd", "dssd", "yolo", "retinanet"):
-        train_command = "-e {} -r /home/{}/experiment_dir_unpruned -k {} -m {} --initial_epoch 0".format(
-            config_file, arch, key or os.environ.get("KEY"), model_dir
-        ).split(
-            " "
-        )
-    elif arch in ("faster_rcnn",):
-        train_command = "-e {}".format(
-            config_file, model_name
-        ).split(" ")
-    elif arch in ("mask_rcnn",):
-        train_command = "-e {} -d /home/{}/experiment_dir_unpruned -k {}".format(
-            config_file, arch, key or os.environ.get("KEY"), model_name
-        ).split(
-            " "
-        )
-    else:
-        raise NotImplementedError("Unsupported module.")
-    print("train_command {}".format(train_command))
-    tlt_train(
-        train_command,
-        arch,
-    )
-    get_output("ls -lh /home/{}/experiment_dir_unpruned/weights".format(arch))
+def train_unpruned(model_name):
+    train_tlt()
     tlt_task = Task.current_task()
+    get_output("ls -lh {}".format(tlt_task.get_parameter("Args/results_dir")))
     tlt_task.upload_artifact(
         name="unpruned_weights",
         artifact_object=os.path.join(
             os.path.expandvars(
-                "/home/{}/experiment_dir_unpruned/weights/{}_detector.tlt".format(
-                    arch, model_name
+                "{}/weights/{}.tlt".format(
+                    tlt_task.get_parameter("Args/results_dir"), model_name
+                )
+            )
+        ),
+    )
+    tlt_task.upload_artifact(
+        name="pbtxt model configuration file",
+        artifact_object=os.path.join(
+            os.path.expandvars(
+                "{}/graph.pbtxt".format(
+                    tlt_task.get_parameter("Args/results_dir")
                 )
             )
         ),
@@ -281,8 +183,12 @@ def connect_config_files(task, arch, config_path=None):
 
 
 def main():
-    task = Task.init(project_name="Nvidia TLT examples with ClearML", task_name="TLT train")
+    task = Task.init(project_name="TLT3", task_name="TLT train", reuse_last_task_id=False)
     parser = ArgumentParser()
+    parser.add_argument(
+        "--module",
+        required=True,
+    )
     parser.add_argument(
         "-m",
         "--ngc-model",
@@ -316,10 +222,9 @@ def main():
     )
 
     parser.add_argument(
-        "-e",
-        "--dataset-export-spec",
-        help="Path to the detection dataset spec containing the config for exporting .tfrecord files",
-        required=True,
+       "--dataset-export-spec",
+       help="Path to the detection dataset spec containing the config for exporting .tfrecord files",
+       required=True,
     )
 
     parser.add_argument(
@@ -332,7 +237,7 @@ def main():
         "file named `detectnet_v2_spec_file_template.txt`, "
         "which will be selected as a configuration file for the training). ",
     )
-
+    
     parser.add_argument(
         "-k",
         "--key",
@@ -341,29 +246,35 @@ def main():
         help="The key to load pretrained weights and save intermediate snapshopts and final model. "
         "If not provided, an OS environment named 'KEY' must be set.",
     )
-
+    parser.add_argument(
+        '-n',
+        '--model_name',
+        type=str,
+        default='model',
+        help='Name of the model file. If not given, then defaults to model.hdf5.')
+    
     args = parser.parse_args()
     ngc_model = args.ngc_model
     arch = args.arch
     config_files = args.config_files
     dataset_export_spec = args.dataset_export_spec
-    key = args.key
-
-    model_name = ngc_model.rpartition(":")[2]
+    
+    pre_model_name = ngc_model.rpartition(":")[2]
     unpruned_config_file = connect_config_files(task, arch, config_files)
     if not unpruned_config_file:
         unpruned_config_file = task.connect_configuration(arch, name=arch)
 
-    task.set_base_docker("nvcr.io/nvidia/tlt-streamanalytics:v2.0_py3")
-
+    task.set_base_docker("nvcr.io/nvidia/tlt-streamanalytics:v3.0-dp-py3")
 
     get_converted_data(args.dataset_task, unpruned_config_file)
     dataset_export_spec = task.connect_configuration(
-        dataset_export_spec, name="dataset export spec"
+       dataset_export_spec, name="dataset export spec"
     )
+    # Remove comment for execute remotely
+    # task.execute_remotely(queue_name="default")
     kitti_to_tfrecord(dataset_export_spec, unpruned_config_file)
-    model_dir = download_pretrained_model(model_name, ngc_model, unpruned_config_file)
-    train_unpruned(model_name, unpruned_config_file, arch, key, model_dir)
+    download_pretrained_model(pre_model_name, ngc_model, unpruned_config_file)
+    train_unpruned(args.model_name)
 
 
 if __name__ == "__main__":

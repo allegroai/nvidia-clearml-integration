@@ -1,57 +1,25 @@
 """ClearML evaluate wrapper for TLT cli."""
+import argparse
 import os
+import sys
 from argparse import ArgumentParser
 
 from clearml import Dataset, Task
+from clearml.config import running_remotely
 from pathlib2 import Path
 
 
-def tlt_eval(eval_args, module):
-    import third_party.keras.mixed_precision as MP, third_party.keras.tensorflow_backend as TFB
-
-    MP.patch()
-    TFB.patch()
-    if module == "classification":
-        from iva.makenet.scripts import evaluate as makenet_evaluate
-
-        makenet_evaluate.main(eval_args)
-    else:
-        if module == "faster_rcnn":
-            from iva.faster_rcnn.scripts import test as frcnn_evaluate
-
-            frcnn_evaluate.main(eval_args)
-        else:
-            if module in ("ssd", "dssd"):
-                from iva.ssd.scripts import evaluate as ssd_evaluate
-
-                ssd_evaluate.main(eval_args)
-            else:
-                if module == "retinanet":
-                    from iva.retinanet.scripts import evaluate as retinanet_evaluate
-
-                    retinanet_evaluate.main(eval_args)
-                else:
-                    if module == "yolo":
-                        from iva.yolo.scripts import evaluate as yolo_evaluate
-
-                        yolo_evaluate.main(eval_args)
-                    else:
-                        if module == "detectnet_v2":
-                            from iva.detectnet_v2.scripts import (
-                                evaluate as detectnet_v2_evaluate,
-                            )
-
-                            detectnet_v2_evaluate.main(eval_args)
-                        else:
-                            if module == "mask_rcnn":
-                                from iva.mask_rcnn.scripts import evaluate as mrcnn_eval
-
-                                mrcnn_eval.main(eval_args)
-                            else:
-                                raise NotImplementedError("Unsupported module.")
+from iva.common.magnet_evaluate import main as evaluate_tlt
 
 
-def eval_unpruned(config_file, arch, train_task_id, key=None):
+def parse_known_args_only(self, args=None, namespace=None):
+    return self.parse_known_args(args=None, namespace=None)[0]
+
+
+argparse.ArgumentParser.parse_args = parse_known_args_only
+
+
+def eval_unpruned():
     """
     tlt-evaluate args
 
@@ -93,20 +61,7 @@ def eval_unpruned(config_file, arch, train_task_id, key=None):
 
     https://docs.nvidia.com/metropolis/TLT/tlt-getting-started-guide/text/evaluating_model.html
     """
-    if arch in ("classification",):
-        train_command = "-e {} -k {}".format(config_file, key or os.environ.get("KEY")).split(" ")
-    elif arch in ("detectnet_v2", "ssd", "dssd", "yolo", "retinanet", "mask_rcnn", "faster_rcnn",):
-        weights_task = Task.get_task(task_id=train_task_id)
-        unpruned_weights = weights_task.artifacts["unpruned_weights"].get_local_copy()
-        if arch in ("detectnet_v2", "ssd", "dssd", "yolo", "retinanet", "mask_rcnn",):
-            train_command = "-e {} -m {} -k {}".format(config_file, unpruned_weights,
-                                                       key or os.environ.get("KEY")).split(" ")
-        else:
-            train_command = "-e {}".format(config_file).split(" ")
-    else:
-        raise NotImplementedError("Unsupported module.")
-
-    tlt_eval(train_command, arch)
+    evaluate_tlt()
 
 
 def get_field_from_config(conf, field):
@@ -129,7 +84,11 @@ def get_converted_data(dataset_task, conf_file):
         .strip('"')
         .rpartition("/")[0]
     )
-    os.makedirs(image_directory_path)
+    # noinspection PyBroadException
+    try:
+        os.makedirs(image_directory_path)
+    except Exception:
+        pass
     # download the artifact and open it
     saved_dataset = dataset_upload_task.get_local_copy()
     dataset_name = os.listdir(saved_dataset)[0]
@@ -152,7 +111,7 @@ def get_converted_data(dataset_task, conf_file):
                 file.extractall(image_directory_path)
         saved_dataset = str(dataset_path)
     else:
-        os.system("cp -R {}/train {}".format(saved_dataset, image_directory_path))
+        os.system("cp -R {}/* {}".format(saved_dataset, image_directory_path))
     print(saved_dataset)
 
 
@@ -169,7 +128,7 @@ def kitti_to_tfrecord(dataset_export_spec, config_file):
 
 
 def main():
-    task = Task.init(project_name="Nvidia TLT examples with ClearML", task_name="TLT eval")
+    task = Task.init(project_name="TLT3", task_name="TLT eval")
     parser = ArgumentParser()
 
     parser.add_argument(
@@ -189,7 +148,7 @@ def main():
         ],
     )
     parser.add_argument(
-        "-c", "--experiment-spec-file", help="Path to configuration file", required=True
+        "-e", "--experiment_spec_file", help="Path to configuration file", required=True
     )
 
     parser.add_argument(
@@ -200,7 +159,6 @@ def main():
     )
 
     parser.add_argument(
-        "-e",
         "--dataset-export-spec",
         help="Path to the detection dataset spec containing the config for exporting .tfrecord files",
         required=True,
@@ -220,7 +178,24 @@ def main():
         help="The key to load pretrained weights and save intermediate snapshopts and final model. "
              "If not provided, an OS environment named 'KEY' must be set.",
     )
-
+    cmd_train_task = None
+    flag = False
+    if "-m" not in sys.argv and "--model_file" not in sys.argv:
+        for ar in sys.argv:
+            if flag:
+                cmd_train_task = ar
+                break
+            if ar == "-t" or ar == "--train-task":
+                flag = True
+    if cmd_train_task:
+        weights_task = Task.get_task(task_id=cmd_train_task)
+        unpruned_weights = weights_task.artifacts["unpruned_weights"].get()
+        sys.argv.extend(["-m", str(unpruned_weights)])
+    parser.add_argument(
+        "-m", "--model_file",
+        default=str(unpruned_weights) if cmd_train_task else None,
+        type=str,
+    )
     args = parser.parse_args()
     arch = args.arch
     config_file = args.experiment_spec_file
@@ -228,16 +203,21 @@ def main():
     dataset_export_spec = args.dataset_export_spec
     key = args.key
 
-    task.set_base_docker("nvcr.io/nvidia/tlt-streamanalytics:v2.0_py3")
+    task.set_base_docker("nvcr.io/nvidia/tlt-streamanalytics:v3.0-dp-py3")
     config_file = task.connect_configuration(config_file, name="config file")
     get_converted_data(args.dataset_task, config_file)
     dataset_export_spec = task.connect_configuration(
         dataset_export_spec, name="dataset export spec"
     )
     kitti_to_tfrecord(dataset_export_spec, config_file)
-    eval_unpruned(config_file, arch, train_task, key)
+    if train_task and running_remotely():
+        unpruned_weights = Task.get_task(task_id=train_task).artifacts["unpruned_weights"].get()
+        os.system(f"ls {str(unpruned_weights).rpartition('/')[0]}")
+        params = task.get_parameters_as_dict()
+        os.system(f"mkdir -p {params['Args']['model_file'].rpartition('/')[0]}")
+        os.system(f"cp {unpruned_weights} {params['Args']['model_file']}")
+    eval_unpruned()
 
 
 if __name__ == "__main__":
     main()
-
