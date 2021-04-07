@@ -1,8 +1,8 @@
 kitti_config {
-  root_directory_path: "/home/data/train"
-  image_dir_name: "images"
-  label_dir_name: "labels"
-  image_extension: ".jpg"
+  root_directory_path: "/workspace/tlt-experiments/data/tfrecords/kitti_trainval/training"
+  image_dir_name: "image_2"
+  label_dir_name: "label_2"
+  image_extension: ".png"
   partition_mode: "random"
   num_partitions: 2
   val_split: 20
